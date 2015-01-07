@@ -46,7 +46,7 @@ class Actions:
 # Some default config settings.
 default_config = {
         'max_url_length': 1024
-    ,   'default_id_generator': 'uuid'
+    ,   'default_id_generator': 'b64_md5'
     ,   'default_action': 'redirect'
     ,   'log_level': 'DEBUG'
     }
