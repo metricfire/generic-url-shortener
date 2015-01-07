@@ -2,7 +2,6 @@ import os
 import json
 import hashlib
 import time
-import uuid
 import logging
 import hmac
 
@@ -11,6 +10,7 @@ import requests
 
 # Persistent storage.
 import stores
+from idgenerators import IDGenerators
 
 app = Flask(__name__)
 
@@ -42,11 +42,6 @@ class Actions:
     def preview(url_metadata):
         # TODO template etc
         return "Preview: This short URL points to %s" % url_metadata['url']
-
-class IDGenerators:
-    @staticmethod
-    def uuid():
-        return str(uuid.uuid4())
 
 # Some default config settings.
 default_config = {
@@ -148,7 +143,7 @@ def add():
     id_gen_func = getattr(IDGenerators, request_data.get('id_generator', app.config['default_id_generator']))
 
     # Call the ID generating function, with any args the user may have supplied.
-    short_id = id_gen_func(**request_data.get('id_generator_args', {}))
+    short_id = id_gen_func(request_data['url'], **request_data.get('id_generator_args', {}))
     app.logger.debug("short_id=%s", short_id)
     
     # Build the URL metadata that will be put in the persistent store.
