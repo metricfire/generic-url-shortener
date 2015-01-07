@@ -7,6 +7,7 @@ import logging
 import hmac
 
 from flask import Flask, request, redirect
+import requests
 
 # Persistent storage.
 import stores
@@ -21,8 +22,21 @@ class Actions:
     
     @staticmethod
     def proxy(url_metadata):
-        # TODO Fetch and serve
-        return "Proxying not implemented yet.", 501
+        # TODO Consider the security (XSS/CSRF/etc) implications of this.
+
+        # Mitigation points:
+        # * No user-defined headers are sent with the request.
+        # * It is forced to be a GET request.
+        # * Only some of the response is returned:
+        #   * Request body
+        #   * HTTP response code
+        #   * Content-type header
+        #
+        # Is this enough?
+
+        response = requests.get(url_metadata['url'], timeout=30)
+        return response.content, response.status_code, \
+            {'Content-Type': response.headers.get('content-type', 'text/plain')}
     
     @staticmethod
     def preview(url_metadata):
