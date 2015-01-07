@@ -1,38 +1,43 @@
 import os
-from flask import Flask, request
 import json
 import hashlib
 import time
 import uuid
 import logging
 
+from flask import Flask, request, redirect
+
+# Persistent storage.
+import stores
+
 app = Flask(__name__)
 
 class Actions:
+
     @staticmethod
     def redirect(url_metadata):
-        # Location header
-        pass
+        return redirect(url_metadata['url']) # 302, temporary
     
     @staticmethod
     def proxy(url_metadata):
-        # Fetch and serve
-        pass
+        # TODO Fetch and serve
+        return "Proxying not implemented yet.", 501
     
     @staticmethod
     def preview(url_metadata):
         # TODO template etc
-        pass
+        return "Preview: This short URL points to %s" % url_metadata['url']
 
 class IDGenerators:
     @staticmethod
     def uuid():
-        return uuid.uuid4()
+        return str(uuid.uuid4())
 
 # Some default config settings.
 default_config = {
         'max_url_length': 1024
     ,   'default_id_generator': 'uuid'
+    ,   'default_action': 'redirect'
     ,   'log_level': 'DEBUG'
     }
 
@@ -44,30 +49,32 @@ for k, v in default_config.iteritems():
 app.logger.setLevel(getattr(logging, app.config['log_level']))
 app.logger.addHandler(logging.StreamHandler())
 
-def check_config():
-    """Returns a bool indicating whether we have enough configuration
-    to serve a request."""
+# Config the user is required to provide because there are no sensible
+# defaults.
+required_config = [
+        'api_secret'
+    ,   's3_bucket'
+    ,   'aws_access'
+    ,   'aws_secret'
+    ]
 
-    keys_desired = set(['API_SECRET', 'AWS_ACCESS', 'AWS_SECRET'])
+for k in required_config:
+    try:
+        app.config[k] = os.environ[k]
+    except KeyError:
+        app.logger.error("Cannot start without an environment variable for '%s'" % k)
+        raise Exception("Insufficient config, check your logs for detail.")
 
-    app.logger.info("Verifying config contains these keys: %s", " ".join(keys_desired))
-
-    keys_provided = set(os.environ.keys())
-    keys_missing = keys_desired.difference(keys_provided)
-    
-    if len(keys_missing) > 0:
-        app.logger.info("Config is missing at least one key: %s", " ".join(keys_missing))
-        return False
-    else:
-        app.logger.info("Config passes basic check.")
-        return True
+# Set up the persistent store.
+storage = stores.URLShortenerS3Store(
+        app.config['s3_bucket']
+    ,   app.config['aws_access']
+    ,   app.config['aws_secret']
+    )
 
 @app.route('/')
 def root():
-    if check_config():
-        return 'OK'
-    else:
-        return 'Config not OK, check logs.'
+    return "OK"
 
 def validate_auth_token():
     # The secret token is appended to the complete JSON request body and a
@@ -76,8 +83,8 @@ def validate_auth_token():
     # We accept some variants, like a trailing newline, to try to be nicer
     # to the user.
     auth_tokens = []
-    auth_tokens.append(hashlib.sha1(request.data + os.environ['API_SECRET']).hexdigest())
-    auth_tokens.append(hashlib.sha1(request.data + os.environ['API_SECRET'] + "\n").hexdigest())
+    auth_tokens.append(hashlib.sha1(request.data + app.config['api_secret']).hexdigest())
+    auth_tokens.append(hashlib.sha1(request.data + app.config['api_secret'] + "\n").hexdigest())
     app.logger.debug("auth_tokens=%s", repr(auth_tokens))
     return request.headers.get('x-authtoken', None) in auth_tokens
 
@@ -119,15 +126,6 @@ def add():
     except Exception as ex:
         return json.dumps({"error": str(ex)}), 400
     
-    # Build the URL metadata that will be put in the persistent store.
-    url_metadata = {
-            'url': request_data['url']
-        ,   'actions': request_data.get('actions', None)
-        ,   'created': int(time.time())
-        }
-
-    app.logger.debug("url_metadata=%s", repr(url_metadata))
-
     # Look up the user's specified ID generation function. If they
     # don't specify one, fall back to the default in the config.
     id_gen_func = getattr(IDGenerators, request_data.get('id_generator', app.config['default_id_generator']))
@@ -135,9 +133,18 @@ def add():
     # Call the ID generating function, with any args the user may have supplied.
     short_id = id_gen_func(**request_data.get('id_generator_args', {}))
     app.logger.debug("short_id=%s", short_id)
+    
+    # Build the URL metadata that will be put in the persistent store.
+    url_metadata = {
+            'url': request_data['url']
+        ,   'actions': request_data.get('actions', None)
+        ,   'created': int(time.time())
+        ,   'short_id': short_id
+        }
+    app.logger.debug("url_metadata=%s", repr(url_metadata))
 
     # Save the URL metadata in the persistent store.
-    # TODO
+    storage.put(short_id, url_metadata)
 
     # Build the new short URL and send it back to the user.
     new_url = "%s%s" % (request.url_root, short_id)
@@ -148,14 +155,21 @@ def add():
 @app.route('/<action>/<path:short>')
 def lookup(short, action = None):
     app.logger.debug("route=lookup short=%s action=%s", short, action)
-    # Look up long URL from short path ID
-    # If not action:
-    # Look up default action, according to the rules the URL was created with.
-    # Verify that the requested action is allowed for this URL.
-    # Do something based on the action:
-    # redirect: Send Location header.
-    # proxy: Request the remote content and serve it to the user.
-    # preview: Show the user a page with the long URL and let them take themselves there.
-    return "lookup"
 
+    # Look up the url metadata from persistent storage.
+    url_metadata = storage.get(short)
+    app.logger.debug("url_metadata=%s", url_metadata)
 
+    # Attempt to use the default action if none is provided for this
+    # request.
+    if action is None:
+        action = app.config['default_action']
+
+    # When actions=None, any action is allowed.
+    # Alternatively, the requested action must be in the list specified
+    # for this URL when it was created.
+    if url_metadata['actions'] is None or action in url_metadata['actions']:
+        action_func = getattr(Actions, action)
+        return action_func(url_metadata)
+    else:
+        return "Denied.", 403 # TODO template
