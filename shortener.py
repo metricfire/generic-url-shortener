@@ -4,6 +4,7 @@ import hashlib
 import time
 import uuid
 import logging
+import hmac
 
 from flask import Flask, request, redirect
 
@@ -77,16 +78,18 @@ def root():
     return "OK"
 
 def validate_auth_token():
-    # The secret token is appended to the complete JSON request body and a
-    # sha1 hash is computed. If this matches what the user supplied, it
-    # proves they know the shared secret and are allowed to create URLs.
-    # We accept some variants, like a trailing newline, to try to be nicer
-    # to the user.
-    auth_tokens = []
-    auth_tokens.append(hashlib.sha1(request.data + app.config['api_secret']).hexdigest())
-    auth_tokens.append(hashlib.sha1(request.data + app.config['api_secret'] + "\n").hexdigest())
-    app.logger.debug("auth_tokens=%s", repr(auth_tokens))
-    return request.headers.get('x-authtoken', None) in auth_tokens
+    # Compute a HMAC auth token from what the request data and our shared
+    # secret, using SHA1.
+    auth_token = hmac.HMAC(app.config['api_secret'], request.data, hashlib.sha1).hexdigest()
+    
+    submitted_auth_token = request.headers.get('x-authtoken', None)
+    app.logger.debug("calculated_auth_token=%s submitted_auth_token=%s", auth_token, submitted_auth_token)
+
+    # Look for the auth token we calculated to appear in what the user
+    # submitted. We're not strict about where exactly the auth token appears
+    # in an attempt to not burden the user with getting the whitespace exactly
+    # correct. Once the right token is in there somewhere, it's fine.
+    return auth_token in submitted_auth_token
 
 def validate_add(request_data):
     try:
