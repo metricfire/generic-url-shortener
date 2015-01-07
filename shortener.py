@@ -173,3 +173,7 @@ def lookup(short, action = None):
         return action_func(url_metadata)
     else:
         return "Denied.", 403 # TODO template
+
+@app.route('/favicon.ico')
+def favicon():
+    return "", 404
