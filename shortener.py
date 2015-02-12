@@ -183,12 +183,14 @@ def lookup(short, action = None):
         except KeyError:
             pass
 
-        action = app.config['default_action']
+        if action is None:
+            action = app.config['default_action']
 
     # When actions=None, any action is allowed.
     # Alternatively, the requested action must be in the list specified
     # for this URL when it was created.
     if url_metadata['actions'] is None or action in url_metadata['actions']:
+        app.logger.debug("final_action=%s short=%s", action, short)
         action_func = getattr(Actions, action)
         return action_func(url_metadata)
     else:
