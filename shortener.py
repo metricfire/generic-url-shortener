@@ -180,7 +180,7 @@ def lookup(short, action = None):
         try:
             if len(url_metadata['actions']) == 1:
                 action = url_metadata['actions'][0]
-        except KeyError:
+        except (KeyError, TypeError):
             pass
 
         if action is None:
