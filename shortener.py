@@ -172,9 +172,15 @@ def lookup(short, action = None):
     url_metadata = storage.get(short)
     app.logger.debug("url_metadata=%s", url_metadata)
 
-    # Attempt to use the default action if none is provided for this
-    # request.
+    # If no action is provided, check if only one action is provided for
+    # this URL. If there is, use it. Otherwise, use the default action.
     if action is None:
+        try:
+            if len(url_metadata['actions']) == 1:
+                action = url_metadata['actions'][0]
+        except KeyError:
+            pass
+
         action = app.config['default_action']
 
     # When actions=None, any action is allowed.
