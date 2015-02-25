@@ -62,7 +62,7 @@ app.logger.addHandler(logging.StreamHandler())
 # Config the user is required to provide because there are no sensible
 # defaults.
 required_config = [
-        'api_secret'
+        'api_secrets'
     ,   's3_bucket'
     ,   'aws_access'
     ,   'aws_secret'
@@ -89,16 +89,23 @@ def root():
 def validate_auth_token():
     # Compute a HMAC auth token from what the request data and our shared
     # secret, using SHA1.
-    auth_token = hmac.HMAC(app.config['api_secret'], request.data, hashlib.sha1).hexdigest()
-    
+    valid_auth_tokens = []
+    for shared_secret in app.config['api_secrets'].split(","):
+        valid_auth_tokens.append(hmac.HMAC(shared_secret, request.data,
+            hashlib.sha1).hexdigest())
+
     submitted_auth_token = request.headers.get('x-authtoken', None)
-    app.logger.debug("calculated_auth_token=%s submitted_auth_token=%s", auth_token, submitted_auth_token)
+
+    for auth_token in valid_auth_tokens:
+        app.logger.debug("calculated_auth_token=%s submitted_auth_token=%s "
+            "match=%s", auth_token, submitted_auth_token, \
+            auth_token in submitted_auth_token)
 
     # Look for the auth token we calculated to appear in what the user
     # submitted. We're not strict about where exactly the auth token appears
     # in an attempt to not burden the user with getting the whitespace exactly
     # correct. Once the right token is in there somewhere, it's fine.
-    return auth_token in submitted_auth_token
+    return any(map(lambda at: at in submitted_auth_token, valid_auth_tokens))
 
 def validate_add(request_data):
     try:
