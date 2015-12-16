@@ -4,7 +4,9 @@ MarkupSafe==0.23
 Werkzeug==0.9.6
 argparse==1.2.1
 boto==2.34.0
+graphiteudp==0.0.2
 gunicorn==19.1.1
 itsdangerous==0.24
 requests==2.5.1
+socketcache==0.1.0
 wsgiref==0.1.2

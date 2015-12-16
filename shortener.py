@@ -7,6 +7,7 @@ import hmac
 
 from flask import Flask, request, redirect
 import requests
+import graphiteudp
 
 # Persistent storage.
 import stores
@@ -18,10 +19,12 @@ class Actions:
 
     @staticmethod
     def redirect(url_metadata):
+        graphiteudp.send("lookup.redirect", 1)
         return redirect(url_metadata['url']) # 302, temporary
     
     @staticmethod
     def proxy(url_metadata):
+        graphiteudp.send("lookup.proxy", 1)
         # TODO Consider the security (XSS/CSRF/etc) implications of this.
 
         # Mitigation points:
@@ -41,6 +44,7 @@ class Actions:
     @staticmethod
     def preview(url_metadata):
         # TODO template etc
+        graphiteudp.send("lookup.preview", 1)
         return "Preview: This short URL points to %s" % url_metadata['url']
 
 # Some default config settings.
@@ -49,6 +53,10 @@ default_config = {
     ,   'default_id_generator': 'b64_md5'
     ,   'default_action': 'redirect'
     ,   'log_level': 'DEBUG'
+    ,   'graphite_host': None
+    ,   'graphite_port': 2003
+    ,   'graphite_prefix': None
+    ,   'graphite_debug': False
     }
 
 # Load config from the environment, falling back to the defaults.
@@ -81,6 +89,15 @@ storage = stores.URLShortenerS3Store(
     ,   app.config['aws_access']
     ,   app.config['aws_secret']
     )
+
+# Set up metric reporting.
+if app.config['graphite_host'] is not None:
+    graphiteudp.init(host = app.config['graphite_host']
+        ,   port = app.config['graphite_port']
+        ,   prefix = app.config['graphite_prefix']
+        ,   debug = app.config['graphite_debug'] == "true")
+else:
+    app.logger.warning("Graphite host not specified, graphite metric reporting disabled.")
 
 @app.route('/')
 def root():
@@ -135,6 +152,7 @@ def add():
 
     # Validate auth token.
     if not validate_auth_token():
+        graphiteudp.send("add.bad_auth_token", 1)
         return json.dumps({"error": "Bad auth token."}), 403
 
     request_data = json.loads(request.data)
@@ -143,6 +161,7 @@ def add():
     try:
         validate_add(request_data)
     except Exception as ex:
+        graphiteudp.send("add.bad_request", 1)
         return json.dumps({"error": str(ex)}), 400
     
     # Look up the user's specified ID generation function. If they
@@ -170,12 +189,14 @@ def add():
     # Build the new short URL and send it back to the user.
     new_url = "%s%s" % (request.url_root, short_id)
     app.logger.debug("new_url=%s", new_url)
+    graphiteudp.send("add.created", 1)
     return json.dumps({'url': new_url}), 201
 
 @app.route('/<path:short>')
 @app.route('/<action>/<path:short>')
 def lookup(short, action = None):
     app.logger.debug("route=lookup short=%s action=%s", short, action)
+    graphiteudp.send("lookup.started", 1)
 
     # Look up the url metadata from persistent storage.
     url_metadata = storage.get(short)
@@ -199,8 +220,10 @@ def lookup(short, action = None):
     if url_metadata['actions'] is None or action in url_metadata['actions']:
         app.logger.debug("final_action=%s short=%s", action, short)
         action_func = getattr(Actions, action)
+        graphiteudp.send("lookup.executed", 1)
         return action_func(url_metadata)
     else:
+        graphiteudp.send("lookup.denied", 1)
         return "Denied.", 403 # TODO template
 
 @app.route('/favicon.ico')
